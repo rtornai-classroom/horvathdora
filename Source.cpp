@@ -1,250 +1,381 @@
-ï»¿#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-#include <iostream>
-#include <cmath>
-#include <algorithm>
-#include <fstream>   // FÃ¡jlkezelÃ©shez
-#include <sstream>   // SzÃ¶vegfolyamhoz
-#include <string>    // Sztringekhez
+enum eVertexArrayObject {
+	VAOCurveData,
+	VAOCount
+};
+enum eVertexBufferObject {
+	VBOHermiteData,
+	VBOBezierData,
+	BOCount
+};
+enum eProgram {
+	CurveTesselationProgram,
+	QuadScreenProgram,
+	ProgramCount
+};
+enum eTexture {
+	NoTexture,		// fixes 0 sized array problem
+	TextureCount
+};
 
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
+#include "common.cpp"
+#include <vector> // A dinamikus tömbhöz
 
-// GlobÃ¡lis vÃ¡ltozÃ³k Ã©s konstansok
-const float WINDOW_SIZE = 600.0f;
-const float RADIUS = 50.0f;
+#define	HERMITE_GMT			1
+#define	BEZIER_GMT			2
+#define	BEZIER_BERNSTEIN	3
 
-// KÃ¶r Ã¡llapota
-float cx = 300.0f;
-float cy = 300.0f;
-float vx = 10.0f; // vÃ­zszintes mozgÃ¡s sebessÃ©ge
-float vy = 0.0f;
+GLchar	windowTitle[] = "Hermite and Bezier Curves with Tesselation Shader (Bonus Tasks included)";
 
-// Szakasz Ã¡llapota
-float lineY = 300.0f;
-const float lineWidth = 200.0f; // Ablak harmada (600/3)
-const float lineThickness = 3.0f;
+// Hermite adatok maradhatnak statikusak, mert az mindig 2 pont + 2 tangens
+GLfloat	hermite_data[][3] = {
+	{ -0.2f, -0.3f, 0.0f }, {  0.3f,  0.2f, 0.0f },
+	{ -5.0f,  5.0f, 0.0f }, { -5.0f,  5.0f, 0.0f }
+};
 
-// --- LOGIKAI FÃœGGVÃ‰NYEK ---
+// BÓNUSZ 3: A Bezier pontokat std::vector-ba tesszük, hogy dinamikusan tudjunk hozzáadni/törölni
+std::vector<glm::vec3> bezier_control_points = {
+	glm::vec3(-0.5f, -0.5f, 0.0f), glm::vec3(-0.5f,  0.5f, 0.0f),
+	glm::vec3(0.5f,  0.5f, 0.0f), glm::vec3(0.5f, -0.5f, 0.0f)
+};
 
-void updateCirclePosition() {
-    cx += vx;
-    cy += vy;
+GLuint locationTessMatProjection, locationTessMatModelView, locationCurveType, locationControlPointsNumber;
+GLuint curveType = BEZIER_BERNSTEIN, controlPointsNumber = 4; // Kezdjünk a Bernstein-nel, hogy rögtön menjen a hozzáadás
 
-    // X tengely visszapattanÃ¡s (arÃ¡nyosÃ­tÃ¡ssal)
-    if (cx + RADIUS > WINDOW_SIZE) {
-        float overshoot = (cx + RADIUS) - WINDOW_SIZE;
-        cx = WINDOW_SIZE - RADIUS - overshoot;
-        vx = -vx;
-    }
-    else if (cx - RADIUS < 0.0f) {
-        float overshoot = 0.0f - (cx - RADIUS);
-        cx = 0.0f + RADIUS + overshoot;
-        vx = -vx;
-    }
+GLint dragged = -1;
 
-    // Y tengely visszapattanÃ¡s
-    if (cy + RADIUS > WINDOW_SIZE) {
-        float overshoot = (cy + RADIUS) - WINDOW_SIZE;
-        cy = WINDOW_SIZE - RADIUS - overshoot;
-        vy = -vy;
-    }
-    else if (cy - RADIUS < 0.0f) {
-        float overshoot = 0.0f - (cy - RADIUS);
-        cy = 0.0f + RADIUS + overshoot;
-        vy = -vy;
-    }
+GLfloat distanceSquare(vec2 p1, vec2 p2) {
+	vec2 delta = p1 - p2;
+	return dot(delta, delta);
 }
 
-bool checkIntersection() {
-    float lineStartX = 300.0f - (lineWidth / 2.0f);
-    float lineEndX = 300.0f + (lineWidth / 2.0f);
-    float closestX = std::max(lineStartX, std::min(cx, lineEndX));
-    float closestY = std::max(lineY - (lineThickness / 2.0f), std::min(cy, lineY + (lineThickness / 2.0f)));
-
-    float distanceX = cx - closestX;
-    float distanceY = cy - closestY;
-    float distance = std::sqrt((distanceX * distanceX) + (distanceY * distanceY));
-
-    return distance <= RADIUS;
+GLint getActivePoint(GLfloat sensitivity, vec2 mousePosition) {
+	GLfloat sensitivitySquare = sensitivity * sensitivity;
+	if (curveType == HERMITE_GMT) {
+		for (int i = 0; i < 4; i++) {
+			vec2 p;
+			if (i < 2) p = vec2(hermite_data[i][0], hermite_data[i][1]);
+			else p = vec2(hermite_data[i - 2][0] + hermite_data[i][0], hermite_data[i - 2][1] + hermite_data[i][1]);
+			if (distanceSquare(p, mousePosition) < sensitivitySquare) return i;
+		}
+	}
+	else {
+		// Vector méretét használjuk
+		for (int i = 0; i < bezier_control_points.size(); i++) {
+			vec2 p = vec2(bezier_control_points[i].x, bezier_control_points[i].y);
+			if (distanceSquare(p, mousePosition) < sensitivitySquare) return i;
+		}
+	}
+	return -1;
 }
 
-// BillentyÅ±zet esemÃ©nykezelÅ‘ (Callback)
-void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
-        if (key == GLFW_KEY_UP) {
-            lineY += 5.0f; // Szakasz fel
-        }
-        if (key == GLFW_KEY_DOWN) {
-            lineY -= 5.0f; // Szakasz le
-        }
-        if (key == GLFW_KEY_S && action == GLFW_PRESS) {
-            // 25 fokos szÃ¶gben indÃ­tÃ¡s
-            float angleRad = 25.0f * (M_PI / 180.0f);
-            float speed = 10.0f; //sebessÃ©g
-            vx = speed * std::cos(angleRad);
-            vy = speed * std::sin(angleRad);
-        }
-    }
+void initTesselationShader() {
+	ShaderInfo shader_info[] = {
+		{ GL_FRAGMENT_SHADER,			"./CurveFragShader.glsl" },
+		{ GL_TESS_CONTROL_SHADER,		"./CurveTessContShader.glsl" },
+		{ GL_TESS_EVALUATION_SHADER,	"./CurveTessEvalShader.glsl" },
+		{ GL_VERTEX_SHADER,				"./CurveVertShader.glsl" },
+		{ GL_NONE,						nullptr }
+	};
+	program[CurveTesselationProgram] = LoadShaders(shader_info);
+
+	glBindVertexArray(VAO[VAOCurveData]);
+	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(hermite_data), hermite_data, GL_DYNAMIC_DRAW); // GL_DYNAMIC_DRAW kell a változtatáshoz
+
+	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+	// Vector adatainak feltöltése
+	glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
+
+	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+	glEnableVertexAttribArray(0);
+
+	locationCurveType = glGetUniformLocation(program[CurveTesselationProgram], "curveType");
+	locationControlPointsNumber = glGetUniformLocation(program[CurveTesselationProgram], "controlPointsNumber");
+	locationTessMatProjection = glGetUniformLocation(program[CurveTesselationProgram], "matProjection");
+	locationTessMatModelView = glGetUniformLocation(program[CurveTesselationProgram], "matModelView");
+
+	glUseProgram(program[CurveTesselationProgram]);
+	glUniform1i(locationCurveType, curveType);
+	controlPointsNumber = bezier_control_points.size();
+	glUniform1i(locationControlPointsNumber, controlPointsNumber);
 }
 
-// ÃšJ FÃœGGVÃ‰NY: Shader beolvasÃ¡sa fÃ¡jlbÃ³l Ã©s lefordÃ­tÃ¡sa
-unsigned int loadAndCompileShader(unsigned int type, const char* filePath) {
-    std::string shaderCode;
-    std::ifstream shaderFile;
-
-    // BiztosÃ­tjuk, hogy az ifstream dobjon kivÃ©telt hiba esetÃ©n
-    shaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-
-    try {
-        // FÃ¡jl megnyitÃ¡sa
-        shaderFile.open(filePath);
-        std::stringstream shaderStream;
-        // FÃ¡jl tartalmÃ¡nak beolvasÃ¡sa a stream-be
-        shaderStream << shaderFile.rdbuf();
-        shaderFile.close();
-        // Stream konvertÃ¡lÃ¡sa stringgÃ©
-        shaderCode = shaderStream.str();
-    }
-    catch (std::ifstream::failure& e) {
-        std::cout << "HIBA: Nem talalhato vagy nem olvashato a shader fajl: " << filePath << std::endl;
-        return 0;
-    }
-
-    const char* shaderSource = shaderCode.c_str();
-
-    // Shader fordÃ­tÃ¡sa
-    unsigned int id = glCreateShader(type);
-    glShaderSource(id, 1, &shaderSource, nullptr);
-    glCompileShader(id);
-
-    // FordÃ­tÃ¡si hibÃ¡k ellenÅ‘rzÃ©se
-    int success;
-    char infoLog[512];
-    glGetShaderiv(id, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(id, 512, NULL, infoLog);
-        std::cout << "HIBA: A shader forditas sikertelen (" << filePath << "):\n" << infoLog << std::endl;
-    }
-
-    return id;
+void initShaderProgram() {
+	ShaderInfo shader_info[] = {
+		{ GL_FRAGMENT_SHADER,			"./QuadScreenFragShader.glsl" },
+		{ GL_VERTEX_SHADER,				"./QuadScreenVertShader.glsl" },
+		{ GL_NONE,						nullptr }
+	};
+	program[QuadScreenProgram] = LoadShaders(shader_info);
+	locationMatProjection = glGetUniformLocation(program[QuadScreenProgram], "matProjection");
+	locationMatModelView = glGetUniformLocation(program[QuadScreenProgram], "matModelView");
 }
 
-// --- MAIN FÃœGGVÃ‰NY ---
-int main() {
-    // 1. GLFW InicializÃ¡lÃ¡sa
-    if (!glfwInit()) return -1;
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+void display(GLFWwindow* window, double currentTime) {
+	glClear(GL_COLOR_BUFFER_BIT);
 
-    GLFWwindow* window = glfwCreateWindow(WINDOW_SIZE, WINDOW_SIZE, "Szamitogepes Grafika Beadando", NULL, NULL);
-    if (!window) {
-        glfwTerminate();
-        return -1;
-    }
-    glfwMakeContextCurrent(window);
-    glfwSetKeyCallback(window, key_callback);
+	// Uniform location lekérdezése a színekhez
+	GLuint colorLocCurve = glGetUniformLocation(program[CurveTesselationProgram], "uColor");
+	GLuint colorLocQuad = glGetUniformLocation(program[QuadScreenProgram], "uColor");
 
-    glfwSwapInterval(1);
+	// ==========================================
+	// 1. GÖRBE KIRAJZOLÁSA (Piros) - BÓNUSZ 2
+	// ==========================================
+	glUseProgram(program[CurveTesselationProgram]);
+	glUniform3f(colorLocCurve, 1.0f, 0.0f, 0.0f); // Piros szín a görbének
 
-    // 2. OpenGL betÃ¶ltÅ‘ inicializÃ¡lÃ¡sa (GLEW)
-    glewExperimental = GL_TRUE;
-    if (glewInit() != GLEW_OK) {
-        std::cout << "Failed to initialize GLEW" << std::endl;
-        return -1;
-    }
+	switch (curveType) {
+	case HERMITE_GMT:
+	case BEZIER_GMT:
+		glPatchParameteri(GL_PATCH_VERTICES, 4);
+		glDrawArrays(GL_PATCHES, 0, 4);
+		break;
+	case BEZIER_BERNSTEIN:
+		glPatchParameteri(GL_PATCH_VERTICES, bezier_control_points.size());
+		glDrawArrays(GL_PATCHES, 0, bezier_control_points.size());
+		break;
+	}
 
-    // 3. Shaderek beolvasÃ¡sa fÃ¡jlokbÃ³l Ã©s lÃ©trehozÃ¡suk
-    unsigned int circleVS = loadAndCompileShader(GL_VERTEX_SHADER, "circle_vertex.glsl");
-    unsigned int circleFS = loadAndCompileShader(GL_FRAGMENT_SHADER, "circle_fragment.glsl");
-    unsigned int circleProgram = glCreateProgram();
-    glAttachShader(circleProgram, circleVS);
-    glAttachShader(circleProgram, circleFS);
-    glLinkProgram(circleProgram);
+	// ==========================================
+	// 2. KONTROLLPOLIGON ÉS PONTOK KIRAJZOLÁSA 
+	// ==========================================
+	glUseProgram(program[QuadScreenProgram]);
+	switch (curveType) {
+	case HERMITE_GMT:
+	{
+		// Hermite kontrollpontok (Kék) - BÓNUSZ 2
+		glUniform3f(colorLocQuad, 0.0f, 0.0f, 1.0f);
+		glDrawArrays(GL_POINTS, 0, 2);
 
-    unsigned int lineVS = loadAndCompileShader(GL_VERTEX_SHADER, "line_vertex.glsl");
-    unsigned int lineFS = loadAndCompileShader(GL_FRAGMENT_SHADER, "line_fragment.glsl");
-    unsigned int lineProgram = glCreateProgram();
-    glAttachShader(lineProgram, lineVS);
-    glAttachShader(lineProgram, lineFS);
-    glLinkProgram(lineProgram);
+		// Tangensek vonalai ("Kontrollpoligon" funkció Hermite-nél) (Zöld) - BÓNUSZ 1 & 2
+		GLfloat tangent_lines[4][3] = {
+			{ hermite_data[0][0], hermite_data[0][1], 0.0f },
+			{ hermite_data[0][0] + hermite_data[2][0], hermite_data[0][1] + hermite_data[2][1], 0.0f },
+			{ hermite_data[1][0], hermite_data[1][1], 0.0f },
+			{ hermite_data[1][0] + hermite_data[3][0], hermite_data[1][1] + hermite_data[3][1], 0.0f }
+		};
 
-    // 4. GeometriÃ¡k beÃ¡llÃ­tÃ¡sa (VAO, VBO)
-    float circleVertices[] = {
-        -RADIUS, -RADIUS,
-         RADIUS, -RADIUS,
-         RADIUS,  RADIUS,
-        -RADIUS,  RADIUS
-    };
-    unsigned int indices[] = { 0, 1, 2, 2, 3, 0 };
+		GLuint tempVBO;
+		glGenBuffers(1, &tempVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, tempVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(tangent_lines), tangent_lines, GL_DYNAMIC_DRAW);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
 
-    unsigned int circleVAO, circleVBO, circleEBO;
-    glGenVertexArrays(1, &circleVAO);
-    glGenBuffers(1, &circleVBO);
-    glGenBuffers(1, &circleEBO);
+		glUniform3f(colorLocQuad, 0.0f, 1.0f, 0.0f); // Zöld vonalak
+		glDrawArrays(GL_LINES, 0, 4);
 
-    glBindVertexArray(circleVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, circleVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(circleVertices), circleVertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, circleEBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
+		glUniform3f(colorLocQuad, 0.0f, 0.0f, 1.0f); // Kék pontok a tangensek végén
+		glDrawArrays(GL_POINTS, 1, 1);
+		glDrawArrays(GL_POINTS, 3, 1);
 
-    unsigned int lineVAO, lineVBO, lineEBO;
-    glGenVertexArrays(1, &lineVAO);
-    glGenBuffers(1, &lineVBO);
-    glGenBuffers(1, &lineEBO);
+		glDeleteBuffers(1, &tempVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+		break;
+	}
+	case BEZIER_GMT:
+	case BEZIER_BERNSTEIN:
+		// Kontrollpoligon (nem záródik vissza: GL_LINE_STRIP) (Zöld) - BÓNUSZ 1 & 2
+		glUniform3f(colorLocQuad, 0.0f, 1.0f, 0.0f);
+		glDrawArrays(GL_LINE_STRIP, 0, bezier_control_points.size());
 
-    // --- FELHASZNÃLÃ“I TÃJÃ‰KOZTATÃ“ KIÃRÃSA A KONZOLRA ---
-    std::cout << " IRANYITAS:" << std::endl;
-    std::cout << " [Fel nyil] : Szakasz mozgatasa felfele" << std::endl;
-    std::cout << " [Le nyil]  : Szakasz mozgatasa lefele" << std::endl;
-    std::cout << " [S] gomb   : Kor elinditasa" << std::endl;
+		// Kontrollpontok (Kék) - BÓNUSZ 2
+		glUniform3f(colorLocQuad, 0.0f, 0.0f, 1.0f);
+		glDrawArrays(GL_POINTS, 0, bezier_control_points.size());
+		break;
+	}
+}
 
-    // 5. Render Ciklus (Main Loop)
-    while (!glfwWindowShouldClose(window)) {
-        updateCirclePosition();
-        bool isIntersecting = checkIntersection();
+void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
+	windowWidth = glm::max(width, 1);
+	windowHeight = glm::max(height, 1);
+	float aspectRatio = (float)windowWidth / (float)windowHeight;
+	glViewport(0, 0, windowWidth, windowHeight);
 
-        glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+	if (projectionType == Orthographic)
+		if (windowWidth < windowHeight)
+			matProjection = ortho(-worldSize, worldSize, -worldSize / aspectRatio, worldSize / aspectRatio, -100.0, 100.0);
+		else
+			matProjection = ortho(-worldSize * aspectRatio, worldSize * aspectRatio, -worldSize, worldSize, -100.0, 100.0);
+	else
+		matProjection = perspective(radians(45.0f), aspectRatio, 0.1f, 100.0f);
 
-        float halfW = lineWidth / 2.0f;
-        float halfH = lineThickness / 2.0f;
-        float lineVertices[] = {
-            300.0f - halfW, lineY - halfH,
-            300.0f + halfW, lineY - halfH,
-            300.0f + halfW, lineY + halfH,
-            300.0f - halfW, lineY + halfH
-        };
+	matModel = mat4(1.0);
+	matView = lookAt(vec3(0.0f, 0.0f, 9.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+	matModelView = matView * matModel;
 
-        glBindVertexArray(lineVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, lineVBO);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(lineVertices), lineVertices, GL_DYNAMIC_DRAW);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, lineEBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
+	glUseProgram(program[QuadScreenProgram]);
+	glUniformMatrix4fv(locationMatModelView, 1, GL_FALSE, glm::value_ptr(matModelView));
+	glUniformMatrix4fv(locationMatProjection, 1, GL_FALSE, glm::value_ptr(matProjection));
 
-        glUseProgram(lineProgram);
-        glBindVertexArray(lineVAO);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+	glUseProgram(program[CurveTesselationProgram]);
+	glUniformMatrix4fv(locationTessMatModelView, 1, GL_FALSE, glm::value_ptr(matModelView));
+	glUniformMatrix4fv(locationTessMatProjection, 1, GL_FALSE, glm::value_ptr(matProjection));
+}
 
-        glUseProgram(circleProgram);
-        glUniform2f(glGetUniformLocation(circleProgram, "circleCenter"), cx, cy);
-        glUniform1f(glGetUniformLocation(circleProgram, "radius"), RADIUS);
-        glUniform1i(glGetUniformLocation(circleProgram, "isIntersecting"), isIntersecting ? 1 : 0);
+void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+	glUseProgram(program[CurveTesselationProgram]);
+	if ((action == GLFW_PRESS) && (key == GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
+	if (action == GLFW_PRESS) keyboard[key] = GL_TRUE;
+	else if (action == GLFW_RELEASE) keyboard[key] = GL_FALSE;
 
-        glBindVertexArray(circleVAO);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+	if (key == GLFW_KEY_O && action == GLFW_PRESS) {
+		projectionType = Orthographic;
+		framebufferSizeCallback(window, windowWidth, windowHeight);
+	}
+	if (key == GLFW_KEY_P && action == GLFW_PRESS) {
+		projectionType = Perspective;
+		framebufferSizeCallback(window, windowWidth, windowHeight);
+	}
 
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
+	// A + és - gombokat meghagytam arra az esetre, ha kézzel akarnád állítani
+	if ((action == GLFW_PRESS) && ((key == GLFW_KEY_KP_ADD) || (key == GLFW_KEY_EQUAL))) {
+		controlPointsNumber++;
+		glUniform1i(locationControlPointsNumber, controlPointsNumber);
+	}
+	if ((action == GLFW_PRESS) && ((key == GLFW_KEY_KP_SUBTRACT) || (key == GLFW_KEY_MINUS)) && (controlPointsNumber > 1)) {
+		controlPointsNumber--;
+		glUniform1i(locationControlPointsNumber, controlPointsNumber);
+	}
 
-    glfwTerminate();
-    return 0;
+	if (key == GLFW_KEY_H && action == GLFW_PRESS) {
+		curveType = HERMITE_GMT;
+		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
+	}
+	if (key == GLFW_KEY_B && action == GLFW_PRESS) {
+		curveType = BEZIER_GMT;
+		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+	}
+	if (key == GLFW_KEY_A && action == GLFW_PRESS) {
+		curveType = BEZIER_BERNSTEIN;
+		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+	}
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+	glUniform1i(locationCurveType, curveType);
+}
+
+void cursorPosCallback(GLFWwindow* window, double xPos, double yPos) {
+	if (dragged >= 0) {
+		vec2 mousePosition;
+		mousePosition.x = xPos * 2.0f / (GLdouble)windowWidth - 1.0f;
+		mousePosition.y = ((GLdouble)windowHeight - yPos) * 2.0f / (GLdouble)windowHeight - 1.0f;
+
+		float aspectRatio = (float)windowWidth / (float)windowHeight;
+		if (windowWidth < windowHeight) mousePosition.y /= aspectRatio;
+		else mousePosition.x *= aspectRatio;
+
+		if (curveType == HERMITE_GMT) {
+			if (dragged < 2) {
+				hermite_data[dragged][0] = mousePosition.x;
+				hermite_data[dragged][1] = mousePosition.y;
+			}
+			else {
+				hermite_data[dragged][0] = mousePosition.x - hermite_data[dragged - 2][0];
+				hermite_data[dragged][1] = mousePosition.y - hermite_data[dragged - 2][1];
+			}
+			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(hermite_data), hermite_data, GL_DYNAMIC_DRAW);
+		}
+		else {
+			bezier_control_points[dragged].x = mousePosition.x;
+			bezier_control_points[dragged].y = mousePosition.y;
+			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+			glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
+		}
+	}
+}
+
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+	double xPos, yPos;
+	glfwGetCursorPos(window, &xPos, &yPos);
+
+	vec2 mousePosition;
+	mousePosition.x = xPos * 2.0f / (GLdouble)windowWidth - 1.0f;
+	mousePosition.y = ((GLdouble)windowHeight - yPos) * 2.0f / (GLdouble)windowHeight - 1.0f;
+
+	float aspectRatio = (float)windowWidth / (float)windowHeight;
+	if (windowWidth < windowHeight) mousePosition.y /= aspectRatio;
+	else mousePosition.x *= aspectRatio;
+
+	// BÓNUSZ 3: Pont hozzáadása (Bal klikk üres helyre)
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+		dragged = getActivePoint(0.1f, mousePosition);
+
+		// Ha nem kattintottunk meglevõ pontra, és Bezier módban vagyunk, hozzáadunk egy újat
+		if (dragged == -1 && curveType == BEZIER_BERNSTEIN) {
+			bezier_control_points.push_back(glm::vec3(mousePosition.x, mousePosition.y, 0.0f));
+
+			// VBO frissítése az új mérettel
+			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+			glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
+
+			// Uniform frissítése
+			controlPointsNumber = bezier_control_points.size();
+			glUseProgram(program[CurveTesselationProgram]);
+			glUniform1i(locationControlPointsNumber, controlPointsNumber);
+
+			// Rögtön meg is fogjuk az új pontot, ha mozgatni akarjuk
+			dragged = bezier_control_points.size() - 1;
+		}
+	}
+
+	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
+		dragged = -1;
+	}
+
+	// BÓNUSZ 3: Pont törlése (Jobb klikk meglévõ pontra)
+	if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+		int clicked = getActivePoint(0.1f, mousePosition);
+
+		// Ha meglévõ pontra kattintottunk, és van még legalább 3 pontunk (hogy legyen értelme a görbének)
+		if (clicked >= 0 && curveType == BEZIER_BERNSTEIN && bezier_control_points.size() > 2) {
+			bezier_control_points.erase(bezier_control_points.begin() + clicked);
+
+			// VBO frissítése
+			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
+			glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
+
+			// Uniform frissítése
+			controlPointsNumber = bezier_control_points.size();
+			glUseProgram(program[CurveTesselationProgram]);
+			glUniform1i(locationControlPointsNumber, controlPointsNumber);
+
+			dragged = -1;
+		}
+	}
+}
+
+int main(void) {
+	init(4, 0, GLFW_OPENGL_COMPAT_PROFILE);
+	initTesselationShader();
+	initShaderProgram();
+	setlocale(LC_ALL, "");
+
+	cout << "Hermite and Bezier Curves with Tesselation Shader (Bonus Tasks included)" << endl;
+	cout << "Keyboard control" << endl;
+	cout << "ESC\texit" << endl;
+	cout << "O\tinduces orthographic projection" << endl;
+	cout << "P\tinduces perspective projection" << endl;
+	cout << "H\tHermite curve with GMT" << endl;
+	cout << "B\tBezier curve with GMT" << endl;
+	cout << "A\tArrayed Bezier curve with Bernstein polynoms" << endl;
+	cout << "Bal egergomb\tAdd new point / Drag point" << endl;
+	cout << "Jobb egergomb\tRemove existing point" << endl << endl;
+
+	framebufferSizeCallback(window, windowWidth, windowHeight);
+
+	// A kerek pontokhoz (opcionális, de szebbé teszi a pontokat, ha a shadered támogatja)
+	glEnable(GL_PROGRAM_POINT_SIZE);
+	glPointSize(10.0f);
+
+	while (!glfwWindowShouldClose(window)) {
+		display(window, glfwGetTime());
+		glfwSwapBuffers(window);
+		glfwPollEvents();
+	}
+
+	cleanUpScene(EXIT_SUCCESS);
+	return EXIT_SUCCESS;
 }
