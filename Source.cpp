@@ -1,381 +1,339 @@
-enum eVertexArrayObject {
-	VAOCurveData,
-	VAOCount
+Ôªøenum eVertexArrayObject {
+    VAOCube,
+    VAOSphere,
+    VAOCount
 };
-enum eVertexBufferObject {
-	VBOHermiteData,
-	VBOBezierData,
-	BOCount
+enum eBufferObject {
+    VBOCube,
+    VBOSphere,
+    EBOSphere,
+    BOCount
 };
 enum eProgram {
-	CurveTesselationProgram,
-	QuadScreenProgram,
-	ProgramCount
+    MainProgram,
+    ProgramCount
 };
 enum eTexture {
-	NoTexture,		// fixes 0 sized array problem
-	TextureCount
+    SunTexture,
+    TextureCount
 };
 
 #include "common.cpp"
-#include <vector> // A dinamikus tˆmbhˆz
 
-#define	HERMITE_GMT			1
-#define	BEZIER_GMT			2
-#define	BEZIER_BERNSTEIN	3
+GLchar  windowTitle[] = "Szamitogepes Grafika Beadando";
 
-GLchar	windowTitle[] = "Hermite and Bezier Curves with Tesselation Shader (Bonus Tasks included)";
+// --- Kamera Param√©terek (Hengerkoordin√°ta rendszer) ---
+const float r = 9.0f;               // r sug√°r (8 <= r <= 10)
+float camAngle = 0.0f;              // Forg√°s a Z-tengely k√∂r√ºl
+float camZ = 0.0f;                  // Kamera magass√°ga (Z-tengely ment√©n)
+const float camSpeed = 1.5f;
 
-// Hermite adatok maradhatnak statikusak, mert az mindig 2 pont + 2 tangens
-GLfloat	hermite_data[][3] = {
-	{ -0.2f, -0.3f, 0.0f }, {  0.3f,  0.2f, 0.0f },
-	{ -5.0f,  5.0f, 0.0f }, { -5.0f,  5.0f, 0.0f }
+vec3    cameraPosition;
+vec3    cameraTarget = vec3(0.0f, 0.0f, 0.0f); // Mindig az orig√≥ba n√©z
+vec3    cameraUpVector = vec3(0.0f, 0.0f, 1.0f); // UP vektor (0, 0, 1)
+
+// --- F√©nyforr√°s Param√©terek ---
+GLuint  lightPositionLoc;
+GLuint  lightColorLoc;
+GLuint  isLightOnLoc;
+GLuint  isSunLoc;
+GLuint  inverseTransposeMatrixLoc;
+
+vec3    lightPosition;
+float   lightAngle = 0.0f;
+bool    isLightOn = true;
+
+// --- Adatszerkezetek ---
+vector<GLfloat> sphere_vertices;
+vector<GLuint>  sphere_indices;
+
+// Kocka adatok: Poz√≠ci√≥ (3), Norm√°lvektor (3), Text√∫ra (2) - B√°r a kock√°n nem haszn√°lunk text√∫r√°t, a shader miatt kell
+GLfloat cubeVertices[] = {
+    // Front face
+    -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 0.0f,
+     0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 0.0f,
+     0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 1.0f,
+     0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 1.0f,
+    -0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 1.0f,
+    -0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 0.0f,
+    // Back face
+    -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
+     0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 0.0f,
+     0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+     0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+    -0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
+    // Left face
+    -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+    -0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+    -0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+    -0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+    -0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+    // Right face
+     0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+     0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+     0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+     0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+     0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+     0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+     // Bottom face
+     -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
+      0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 1.0f,
+      0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+      0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+     -0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 0.0f,
+     -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
+     // Top face
+     -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
+      0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 1.0f,
+      0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+      0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+     -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 0.0f,
+     -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f
 };
 
-// B”NUSZ 3: A Bezier pontokat std::vector-ba tessz¸k, hogy dinamikusan tudjunk hozz·adni/tˆrˆlni
-std::vector<glm::vec3> bezier_control_points = {
-	glm::vec3(-0.5f, -0.5f, 0.0f), glm::vec3(-0.5f,  0.5f, 0.0f),
-	glm::vec3(0.5f,  0.5f, 0.0f), glm::vec3(0.5f, -0.5f, 0.0f)
-};
+// G√∂mb (Nap) gener√°l√°sa
+void generateSpherePoints(int numHorizontalFaces, int numVerticalFaces) {
+    float horizontalStep = radians(360.0f) / numHorizontalFaces;
+    float verticalStep = radians(180.0f) / numVerticalFaces;
+    float radius = 0.25f; // d = 0.5
 
-GLuint locationTessMatProjection, locationTessMatModelView, locationCurveType, locationControlPointsNumber;
-GLuint curveType = BEZIER_BERNSTEIN, controlPointsNumber = 4; // Kezdj¸nk a Bernstein-nel, hogy rˆgtˆn menjen a hozz·ad·s
+    for (int i = 0; i <= numVerticalFaces; ++i) {
+        for (int j = 0; j <= numHorizontalFaces; ++j) {
+            float u = i * verticalStep;
+            float v = j * horizontalStep;
 
-GLint dragged = -1;
+            float x = radius * sin(u) * cos(v);
+            float y = radius * sin(u) * sin(v);
+            float z = radius * cos(u);
 
-GLfloat distanceSquare(vec2 p1, vec2 p2) {
-	vec2 delta = p1 - p2;
-	return dot(delta, delta);
+            vec3 normal = normalize(vec3(x, y, z));
+            float s = (float)j / numHorizontalFaces;
+            float t = 1.0f - (float)i / numVerticalFaces;
+
+            // Pos (3), Normal (3), TexCoord (2)
+            sphere_vertices.push_back(x); sphere_vertices.push_back(y); sphere_vertices.push_back(z);
+            sphere_vertices.push_back(normal.x); sphere_vertices.push_back(normal.y); sphere_vertices.push_back(normal.z);
+            sphere_vertices.push_back(s); sphere_vertices.push_back(t);
+        }
+    }
+
+    for (int i = 0; i < numVerticalFaces; ++i) {
+        for (int j = 0; j < numHorizontalFaces; ++j) {
+            int p1 = i * (numHorizontalFaces + 1) + j;
+            int p2 = p1 + numHorizontalFaces + 1;
+
+            sphere_indices.push_back(p1);
+            sphere_indices.push_back(p2);
+            sphere_indices.push_back(p1 + 1);
+
+            sphere_indices.push_back(p1 + 1);
+            sphere_indices.push_back(p2);
+            sphere_indices.push_back(p2 + 1);
+        }
+    }
 }
 
-GLint getActivePoint(GLfloat sensitivity, vec2 mousePosition) {
-	GLfloat sensitivitySquare = sensitivity * sensitivity;
-	if (curveType == HERMITE_GMT) {
-		for (int i = 0; i < 4; i++) {
-			vec2 p;
-			if (i < 2) p = vec2(hermite_data[i][0], hermite_data[i][1]);
-			else p = vec2(hermite_data[i - 2][0] + hermite_data[i][0], hermite_data[i - 2][1] + hermite_data[i][1]);
-			if (distanceSquare(p, mousePosition) < sensitivitySquare) return i;
-		}
-	}
-	else {
-		// Vector mÈretÈt haszn·ljuk
-		for (int i = 0; i < bezier_control_points.size(); i++) {
-			vec2 p = vec2(bezier_control_points[i].x, bezier_control_points[i].y);
-			if (distanceSquare(p, mousePosition) < sensitivitySquare) return i;
-		}
-	}
-	return -1;
-}
-
-void initTesselationShader() {
-	ShaderInfo shader_info[] = {
-		{ GL_FRAGMENT_SHADER,			"./CurveFragShader.glsl" },
-		{ GL_TESS_CONTROL_SHADER,		"./CurveTessContShader.glsl" },
-		{ GL_TESS_EVALUATION_SHADER,	"./CurveTessEvalShader.glsl" },
-		{ GL_VERTEX_SHADER,				"./CurveVertShader.glsl" },
-		{ GL_NONE,						nullptr }
-	};
-	program[CurveTesselationProgram] = LoadShaders(shader_info);
-
-	glBindVertexArray(VAO[VAOCurveData]);
-	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(hermite_data), hermite_data, GL_DYNAMIC_DRAW); // GL_DYNAMIC_DRAW kell a v·ltoztat·shoz
-
-	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
-	// Vector adatainak feltˆltÈse
-	glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
-
-	glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
-
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-	glEnableVertexAttribArray(0);
-
-	locationCurveType = glGetUniformLocation(program[CurveTesselationProgram], "curveType");
-	locationControlPointsNumber = glGetUniformLocation(program[CurveTesselationProgram], "controlPointsNumber");
-	locationTessMatProjection = glGetUniformLocation(program[CurveTesselationProgram], "matProjection");
-	locationTessMatModelView = glGetUniformLocation(program[CurveTesselationProgram], "matModelView");
-
-	glUseProgram(program[CurveTesselationProgram]);
-	glUniform1i(locationCurveType, curveType);
-	controlPointsNumber = bezier_control_points.size();
-	glUniform1i(locationControlPointsNumber, controlPointsNumber);
+GLuint loadTexture(const GLchar* texturePath) {
+    GLuint textureID = SOIL_load_OGL_texture(texturePath, SOIL_LOAD_AUTO, SOIL_CREATE_NEW_ID, SOIL_FLAG_INVERT_Y);
+    if (textureID == 0) {
+        cout << "Hiba: Text√∫ra nem tal√°lhat√≥ (" << texturePath << ")" << endl;
+        // cleanUpScene(EXIT_FAILURE); -> Ezt kivettem, hogy ne omoljon √∂ssze, ha nincs meg a text√∫ra
+    }
+    glBindTexture(GL_TEXTURE_2D, textureID);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    return textureID;
 }
 
 void initShaderProgram() {
-	ShaderInfo shader_info[] = {
-		{ GL_FRAGMENT_SHADER,			"./QuadScreenFragShader.glsl" },
-		{ GL_VERTEX_SHADER,				"./QuadScreenVertShader.glsl" },
-		{ GL_NONE,						nullptr }
-	};
-	program[QuadScreenProgram] = LoadShaders(shader_info);
-	locationMatProjection = glGetUniformLocation(program[QuadScreenProgram], "matProjection");
-	locationMatModelView = glGetUniformLocation(program[QuadScreenProgram], "matModelView");
+    ShaderInfo shader_info[] = {
+        { GL_VERTEX_SHADER,     "./vertexShader.glsl" },
+        { GL_FRAGMENT_SHADER,   "./fragmentShader.glsl" },
+        { GL_NONE, nullptr }
+    };
+
+    program[MainProgram] = LoadShaders(shader_info);
+
+    locationMatModel = glGetUniformLocation(program[MainProgram], "matModel");
+    locationMatView = glGetUniformLocation(program[MainProgram], "matView");
+    locationMatProjection = glGetUniformLocation(program[MainProgram], "matProjection");
+
+    inverseTransposeMatrixLoc = glGetUniformLocation(program[MainProgram], "inverseTransposeMatrix");
+    lightPositionLoc = glGetUniformLocation(program[MainProgram], "lightPosition");
+    lightColorLoc = glGetUniformLocation(program[MainProgram], "lightColor");
+    isLightOnLoc = glGetUniformLocation(program[MainProgram], "isLightOn");
+    isSunLoc = glGetUniformLocation(program[MainProgram], "isSun");
+
+    // --- KOCKA VAO ---
+    glBindVertexArray(VAO[VAOCube]);
+    glBindBuffer(GL_ARRAY_BUFFER, BO[VBOCube]);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
+
+    // Position (0)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (GLvoid*)0);
+    glEnableVertexAttribArray(0);
+    // Normal (1)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (GLvoid*)(3 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(1);
+    // TexCoord (2)
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (GLvoid*)(6 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(2);
+
+    // --- G√ñMB VAO ---
+    generateSpherePoints(32, 16);
+    glBindVertexArray(VAO[VAOSphere]);
+
+    glBindBuffer(GL_ARRAY_BUFFER, BO[VBOSphere]);
+    glBufferData(GL_ARRAY_BUFFER, sphere_vertices.size() * sizeof(GLfloat), sphere_vertices.data(), GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, BO[EBOSphere]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sphere_indices.size() * sizeof(GLuint), sphere_indices.data(), GL_STATIC_DRAW);
+
+    // Position (0)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (GLvoid*)0);
+    glEnableVertexAttribArray(0);
+    // Normal (1)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (GLvoid*)(3 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(1);
+    // TexCoord (2)
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (GLvoid*)(6 * sizeof(GLfloat)));
+    glEnableVertexAttribArray(2);
+
+    // --- TEXT√öRA √âS √ÅLLAPOTOK ---
+    glUseProgram(program[MainProgram]);
+    glClearColor(0.5f, 0.7f, 1.0f, 1.0f);
+    glEnable(GL_DEPTH_TEST);
+
+    // Text√∫ra bet√∂lt√©se (Nap k√©pe) - Ide egy helyi k√©pet kell betenned, amit let√∂lt√∂tt√©l!
+    texture[SunTexture] = loadTexture("sun.jpg");
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture[SunTexture]);
+}
+
+void computeCameraMatrix() {
+    // Kamera poz√≠ci√≥ kisz√°m√≠t√°sa hengerkoordin√°t√°kkal
+    cameraPosition.x = r * cos(camAngle);
+    cameraPosition.y = r * sin(camAngle);
+    cameraPosition.z = camZ;
+
+    matView = lookAt(cameraPosition, cameraTarget, cameraUpVector);
+    glUniformMatrix4fv(locationMatView, 1, GL_FALSE, value_ptr(matView));
+}
+
+void drawCube(vec3 position) {
+    matModel = translate(mat4(1.0f), position);
+    glUniformMatrix4fv(locationMatModel, 1, GL_FALSE, value_ptr(matModel));
+
+    mat3 invTransp = mat3(inverseTranspose(matModel));
+    glUniformMatrix3fv(inverseTransposeMatrixLoc, 1, GL_FALSE, value_ptr(invTransp));
+
+    glUniform1i(isSunLoc, 0); // Kock√°t rajzolunk (feh√©r)
+
+    glBindVertexArray(VAO[VAOCube]);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+
+void drawSun() {
+    matModel = translate(mat4(1.0f), lightPosition);
+    glUniformMatrix4fv(locationMatModel, 1, GL_FALSE, value_ptr(matModel));
+
+    glUniform1i(isSunLoc, 1); // Napot rajzolunk (text√∫r√°s, vil√°g√≠t√≥)
+
+    glBindVertexArray(VAO[VAOSphere]);
+    glDrawElements(GL_TRIANGLES, (GLsizei)sphere_indices.size(), GL_UNSIGNED_INT, nullptr);
 }
 
 void display(GLFWwindow* window, double currentTime) {
-	glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	// Uniform location lekÈrdezÈse a szÌnekhez
-	GLuint colorLocCurve = glGetUniformLocation(program[CurveTesselationProgram], "uColor");
-	GLuint colorLocQuad = glGetUniformLocation(program[QuadScreenProgram], "uColor");
+    static GLdouble lastFrame = 0.0f;
+    GLdouble deltaTime = currentTime - lastFrame;
+    lastFrame = currentTime;
 
-	// ==========================================
-	// 1. G÷RBE KIRAJZOL¡SA (Piros) - B”NUSZ 2
-	// ==========================================
-	glUseProgram(program[CurveTesselationProgram]);
-	glUniform3f(colorLocCurve, 1.0f, 0.0f, 0.0f); // Piros szÌn a gˆrbÈnek
+    // --- Ir√°ny√≠t√°s ---
+    if ((keyboard[GLFW_KEY_LEFT]))  camAngle -= camSpeed * deltaTime;
+    if ((keyboard[GLFW_KEY_RIGHT])) camAngle += camSpeed * deltaTime;
+    if ((keyboard[GLFW_KEY_UP]))    camZ += camSpeed * 2.0f * deltaTime;
+    if ((keyboard[GLFW_KEY_DOWN]))  camZ -= camSpeed * 2.0f * deltaTime;
 
-	switch (curveType) {
-	case HERMITE_GMT:
-	case BEZIER_GMT:
-		glPatchParameteri(GL_PATCH_VERTICES, 4);
-		glDrawArrays(GL_PATCHES, 0, 4);
-		break;
-	case BEZIER_BERNSTEIN:
-		glPatchParameteri(GL_PATCH_VERTICES, bezier_control_points.size());
-		glDrawArrays(GL_PATCHES, 0, bezier_control_points.size());
-		break;
-	}
+    computeCameraMatrix();
 
-	// ==========================================
-	// 2. KONTROLLPOLIGON …S PONTOK KIRAJZOL¡SA 
-	// ==========================================
-	glUseProgram(program[QuadScreenProgram]);
-	switch (curveType) {
-	case HERMITE_GMT:
-	{
-		// Hermite kontrollpontok (KÈk) - B”NUSZ 2
-		glUniform3f(colorLocQuad, 0.0f, 0.0f, 1.0f);
-		glDrawArrays(GL_POINTS, 0, 2);
+    // --- F√©nyforr√°s friss√≠t√©se ---
+    lightAngle += 1.0f * deltaTime;
+    float lightRadius = 2.0f * r;
+    lightPosition = vec3(lightRadius * cos(lightAngle), lightRadius * sin(lightAngle), 0.0f);
 
-		// Tangensek vonalai ("Kontrollpoligon" funkciÛ Hermite-nÈl) (Zˆld) - B”NUSZ 1 & 2
-		GLfloat tangent_lines[4][3] = {
-			{ hermite_data[0][0], hermite_data[0][1], 0.0f },
-			{ hermite_data[0][0] + hermite_data[2][0], hermite_data[0][1] + hermite_data[2][1], 0.0f },
-			{ hermite_data[1][0], hermite_data[1][1], 0.0f },
-			{ hermite_data[1][0] + hermite_data[3][0], hermite_data[1][1] + hermite_data[3][1], 0.0f }
-		};
+    vec3 lightColor = vec3(1.0f, 0.9f, 0.4f); // Meleg s√°rg√°s/napf√©ny
 
-		GLuint tempVBO;
-		glGenBuffers(1, &tempVBO);
-		glBindBuffer(GL_ARRAY_BUFFER, tempVBO);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(tangent_lines), tangent_lines, GL_DYNAMIC_DRAW);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+    glUniform3fv(lightPositionLoc, 1, value_ptr(lightPosition));
+    glUniform3fv(lightColorLoc, 1, value_ptr(lightColor));
+    glUniform1i(isLightOnLoc, isLightOn ? 1 : 0);
 
-		glUniform3f(colorLocQuad, 0.0f, 1.0f, 0.0f); // Zˆld vonalak
-		glDrawArrays(GL_LINES, 0, 4);
+    // --- Kirajzol√°s ---
+    // 1. Kock√°k kirajzol√°sa (Z-tengelyen helyezkednek el)
+    drawCube(vec3(0.0f, 0.0f, 0.0f)); // Orig√≥
+    drawCube(vec3(0.0f, 0.0f, 2.0f)); // Fels≈ë kocka (1 egys√©g h√©zag)
+    drawCube(vec3(0.0f, 0.0f, -2.0f)); // Als√≥ kocka (1 egys√©g h√©zag)
 
-		glUniform3f(colorLocQuad, 0.0f, 0.0f, 1.0f); // KÈk pontok a tangensek vÈgÈn
-		glDrawArrays(GL_POINTS, 1, 1);
-		glDrawArrays(GL_POINTS, 3, 1);
-
-		glDeleteBuffers(1, &tempVBO);
-		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-		break;
-	}
-	case BEZIER_GMT:
-	case BEZIER_BERNSTEIN:
-		// Kontrollpoligon (nem z·rÛdik vissza: GL_LINE_STRIP) (Zˆld) - B”NUSZ 1 & 2
-		glUniform3f(colorLocQuad, 0.0f, 1.0f, 0.0f);
-		glDrawArrays(GL_LINE_STRIP, 0, bezier_control_points.size());
-
-		// Kontrollpontok (KÈk) - B”NUSZ 2
-		glUniform3f(colorLocQuad, 0.0f, 0.0f, 1.0f);
-		glDrawArrays(GL_POINTS, 0, bezier_control_points.size());
-		break;
-	}
+    // 2. Nap kirajzol√°sa (csak ha √©g a villany)
+    if (isLightOn) {
+        drawSun();
+    }
 }
 
 void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
-	windowWidth = glm::max(width, 1);
-	windowHeight = glm::max(height, 1);
-	float aspectRatio = (float)windowWidth / (float)windowHeight;
-	glViewport(0, 0, windowWidth, windowHeight);
+    windowWidth = glm::max(width, 1);
+    windowHeight = glm::max(height, 1);
+    glViewport(0, 0, windowWidth, windowHeight);
 
-	if (projectionType == Orthographic)
-		if (windowWidth < windowHeight)
-			matProjection = ortho(-worldSize, worldSize, -worldSize / aspectRatio, worldSize / aspectRatio, -100.0, 100.0);
-		else
-			matProjection = ortho(-worldSize * aspectRatio, worldSize * aspectRatio, -worldSize, worldSize, -100.0, 100.0);
-	else
-		matProjection = perspective(radians(45.0f), aspectRatio, 0.1f, 100.0f);
+    // Perspective vet√≠t√©s 55 fokkal, ahogy a feladat k√©ri
+    GLfloat aspectRatio = (GLfloat)windowWidth / (GLfloat)windowHeight;
+    matProjection = perspective(radians(55.0f), aspectRatio, 0.1f, 100.0f);
 
-	matModel = mat4(1.0);
-	matView = lookAt(vec3(0.0f, 0.0f, 9.0f), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
-	matModelView = matView * matModel;
+    glUseProgram(program[MainProgram]);
+    glUniformMatrix4fv(locationMatProjection, 1, GL_FALSE, value_ptr(matProjection));
+}
 
-	glUseProgram(program[QuadScreenProgram]);
-	glUniformMatrix4fv(locationMatModelView, 1, GL_FALSE, glm::value_ptr(matModelView));
-	glUniformMatrix4fv(locationMatProjection, 1, GL_FALSE, glm::value_ptr(matProjection));
+// √úres callback f√ºggv√©ny az eg√©r mozg√°s√°nak lekezel√©s√©hez (a common.cpp init() f√ºggv√©nye keresi)
+void cursorPosCallback(GLFWwindow* window, double xPos, double yPos) {
+    // A feladathoz most nincs sz√ºks√©g√ºnk az eg√©r poz√≠ci√≥j√°ra
+}
 
-	glUseProgram(program[CurveTesselationProgram]);
-	glUniformMatrix4fv(locationTessMatModelView, 1, GL_FALSE, glm::value_ptr(matModelView));
-	glUniformMatrix4fv(locationTessMatProjection, 1, GL_FALSE, glm::value_ptr(matProjection));
+// √úres callback f√ºggv√©ny az eg√©rkattint√°sok lekezel√©s√©hez (a common.cpp init() f√ºggv√©nye keresi)
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    // A feladathoz most nincs sz√ºks√©g√ºnk az eg√©rkattint√°sokra
 }
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-	glUseProgram(program[CurveTesselationProgram]);
-	if ((action == GLFW_PRESS) && (key == GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
-	if (action == GLFW_PRESS) keyboard[key] = GL_TRUE;
-	else if (action == GLFW_RELEASE) keyboard[key] = GL_FALSE;
+    if ((action == GLFW_PRESS) && (key == GLFW_KEY_ESCAPE)) glfwSetWindowShouldClose(window, GLFW_TRUE);
 
-	if (key == GLFW_KEY_O && action == GLFW_PRESS) {
-		projectionType = Orthographic;
-		framebufferSizeCallback(window, windowWidth, windowHeight);
-	}
-	if (key == GLFW_KEY_P && action == GLFW_PRESS) {
-		projectionType = Perspective;
-		framebufferSizeCallback(window, windowWidth, windowHeight);
-	}
+    if (action == GLFW_PRESS) keyboard[key] = GL_TRUE;
+    else if (action == GLFW_RELEASE) keyboard[key] = GL_FALSE;
 
-	// A + Ès - gombokat meghagytam arra az esetre, ha kÈzzel akarn·d ·llÌtani
-	if ((action == GLFW_PRESS) && ((key == GLFW_KEY_KP_ADD) || (key == GLFW_KEY_EQUAL))) {
-		controlPointsNumber++;
-		glUniform1i(locationControlPointsNumber, controlPointsNumber);
-	}
-	if ((action == GLFW_PRESS) && ((key == GLFW_KEY_KP_SUBTRACT) || (key == GLFW_KEY_MINUS)) && (controlPointsNumber > 1)) {
-		controlPointsNumber--;
-		glUniform1i(locationControlPointsNumber, controlPointsNumber);
-	}
-
-	if (key == GLFW_KEY_H && action == GLFW_PRESS) {
-		curveType = HERMITE_GMT;
-		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
-	}
-	if (key == GLFW_KEY_B && action == GLFW_PRESS) {
-		curveType = BEZIER_GMT;
-		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
-	}
-	if (key == GLFW_KEY_A && action == GLFW_PRESS) {
-		curveType = BEZIER_BERNSTEIN;
-		glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
-	}
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-	glUniform1i(locationCurveType, curveType);
-}
-
-void cursorPosCallback(GLFWwindow* window, double xPos, double yPos) {
-	if (dragged >= 0) {
-		vec2 mousePosition;
-		mousePosition.x = xPos * 2.0f / (GLdouble)windowWidth - 1.0f;
-		mousePosition.y = ((GLdouble)windowHeight - yPos) * 2.0f / (GLdouble)windowHeight - 1.0f;
-
-		float aspectRatio = (float)windowWidth / (float)windowHeight;
-		if (windowWidth < windowHeight) mousePosition.y /= aspectRatio;
-		else mousePosition.x *= aspectRatio;
-
-		if (curveType == HERMITE_GMT) {
-			if (dragged < 2) {
-				hermite_data[dragged][0] = mousePosition.x;
-				hermite_data[dragged][1] = mousePosition.y;
-			}
-			else {
-				hermite_data[dragged][0] = mousePosition.x - hermite_data[dragged - 2][0];
-				hermite_data[dragged][1] = mousePosition.y - hermite_data[dragged - 2][1];
-			}
-			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOHermiteData]);
-			glBufferData(GL_ARRAY_BUFFER, sizeof(hermite_data), hermite_data, GL_DYNAMIC_DRAW);
-		}
-		else {
-			bezier_control_points[dragged].x = mousePosition.x;
-			bezier_control_points[dragged].y = mousePosition.y;
-			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
-			glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
-		}
-	}
-}
-
-void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
-	double xPos, yPos;
-	glfwGetCursorPos(window, &xPos, &yPos);
-
-	vec2 mousePosition;
-	mousePosition.x = xPos * 2.0f / (GLdouble)windowWidth - 1.0f;
-	mousePosition.y = ((GLdouble)windowHeight - yPos) * 2.0f / (GLdouble)windowHeight - 1.0f;
-
-	float aspectRatio = (float)windowWidth / (float)windowHeight;
-	if (windowWidth < windowHeight) mousePosition.y /= aspectRatio;
-	else mousePosition.x *= aspectRatio;
-
-	// B”NUSZ 3: Pont hozz·ad·sa (Bal klikk ¸res helyre)
-	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-		dragged = getActivePoint(0.1f, mousePosition);
-
-		// Ha nem kattintottunk meglevı pontra, Ès Bezier mÛdban vagyunk, hozz·adunk egy ˙jat
-		if (dragged == -1 && curveType == BEZIER_BERNSTEIN) {
-			bezier_control_points.push_back(glm::vec3(mousePosition.x, mousePosition.y, 0.0f));
-
-			// VBO frissÌtÈse az ˙j mÈrettel
-			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
-			glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
-
-			// Uniform frissÌtÈse
-			controlPointsNumber = bezier_control_points.size();
-			glUseProgram(program[CurveTesselationProgram]);
-			glUniform1i(locationControlPointsNumber, controlPointsNumber);
-
-			// Rˆgtˆn meg is fogjuk az ˙j pontot, ha mozgatni akarjuk
-			dragged = bezier_control_points.size() - 1;
-		}
-	}
-
-	if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
-		dragged = -1;
-	}
-
-	// B”NUSZ 3: Pont tˆrlÈse (Jobb klikk meglÈvı pontra)
-	if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
-		int clicked = getActivePoint(0.1f, mousePosition);
-
-		// Ha meglÈvı pontra kattintottunk, Ès van mÈg legal·bb 3 pontunk (hogy legyen Èrtelme a gˆrbÈnek)
-		if (clicked >= 0 && curveType == BEZIER_BERNSTEIN && bezier_control_points.size() > 2) {
-			bezier_control_points.erase(bezier_control_points.begin() + clicked);
-
-			// VBO frissÌtÈse
-			glBindBuffer(GL_ARRAY_BUFFER, BO[VBOBezierData]);
-			glBufferData(GL_ARRAY_BUFFER, bezier_control_points.size() * sizeof(glm::vec3), bezier_control_points.data(), GL_DYNAMIC_DRAW);
-
-			// Uniform frissÌtÈse
-			controlPointsNumber = bezier_control_points.size();
-			glUseProgram(program[CurveTesselationProgram]);
-			glUniform1i(locationControlPointsNumber, controlPointsNumber);
-
-			dragged = -1;
-		}
-	}
+    // Vil√°g√≠t√°s ki/be kapcsol√°sa L bet≈±vel
+    if (key == GLFW_KEY_L && action == GLFW_PRESS) {
+        isLightOn = !isLightOn;
+    }
 }
 
 int main(void) {
-	init(4, 0, GLFW_OPENGL_COMPAT_PROFILE);
-	initTesselationShader();
-	initShaderProgram();
-	setlocale(LC_ALL, "");
+    init(3, 3, GLFW_OPENGL_CORE_PROFILE);
+    initShaderProgram();
+    framebufferSizeCallback(window, windowWidth, windowHeight);
 
-	cout << "Hermite and Bezier Curves with Tesselation Shader (Bonus Tasks included)" << endl;
-	cout << "Keyboard control" << endl;
-	cout << "ESC\texit" << endl;
-	cout << "O\tinduces orthographic projection" << endl;
-	cout << "P\tinduces perspective projection" << endl;
-	cout << "H\tHermite curve with GMT" << endl;
-	cout << "B\tBezier curve with GMT" << endl;
-	cout << "A\tArrayed Bezier curve with Bernstein polynoms" << endl;
-	cout << "Bal egergomb\tAdd new point / Drag point" << endl;
-	cout << "Jobb egergomb\tRemove existing point" << endl << endl;
+    cout << "Kamera forgatas: Bal / Jobb nyil" << endl;
+    cout << "Kamera fel/le: Fel / Le nyil" << endl;
+    cout << "Vilagitas kapcsolasa: L" << endl;
 
-	framebufferSizeCallback(window, windowWidth, windowHeight);
+    while (!glfwWindowShouldClose(window)) {
+        display(window, glfwGetTime());
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
 
-	// A kerek pontokhoz (opcion·lis, de szebbÈ teszi a pontokat, ha a shadered t·mogatja)
-	glEnable(GL_PROGRAM_POINT_SIZE);
-	glPointSize(10.0f);
-
-	while (!glfwWindowShouldClose(window)) {
-		display(window, glfwGetTime());
-		glfwSwapBuffers(window);
-		glfwPollEvents();
-	}
-
-	cleanUpScene(EXIT_SUCCESS);
-	return EXIT_SUCCESS;
+    cleanUpScene(EXIT_SUCCESS);
+    return EXIT_SUCCESS;
 }
